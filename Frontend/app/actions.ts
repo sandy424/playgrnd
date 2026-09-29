@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 
 export type PostState = { error?: string; ok?: boolean };
 
@@ -97,4 +98,18 @@ export async function deleteComment(formData: FormData): Promise<void> {
 
   revalidatePath(`/posts/${postId}`);
   revalidatePath("/");
+}
+
+// 게시글 삭제: 내 게시글만
+export async function deletePost(formData: FormData): Promise<void> {
+  const postId = String(formData.get("post_id") ?? "");
+
+  const { supabase, userId } = await currentUserId();
+  if (!userId || !postId) return;
+
+  const {error} = await supabase.from("posts").delete().match({id: postId, user_id: userId});
+  if (error) console.error("[deletePost]", error.message);
+
+  revalidatePath("/");
+  redirect("/");
 }

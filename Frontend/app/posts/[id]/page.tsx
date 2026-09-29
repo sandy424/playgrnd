@@ -7,6 +7,7 @@ import { displayName, flagEmoji, timeAgo } from "@/lib/format";
 import LikeButton from "@/components/like-button";
 import CommentForm from "@/components/comment-form";
 import { deleteComment } from "@/app/actions";
+import DeletePostButton from "@/components/delete-button";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +68,11 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
               >
                 {category.name_ko}
               </span>
+            )}
+            {post.user_id === userId && (
+              <div>
+                <DeletePostButton postId={post.id}/>
+              </div>
             )}
           </div>
 
