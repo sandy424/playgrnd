@@ -4,7 +4,7 @@ import { useActionState, useEffect, useMemo, useState, useTransition } from "rea
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  Bell, Compass, Crown, Heart, Home, Languages, MessageCircle, Plus, Search, Star, TestTube2, Trophy, Zap,
+  Bell, CalendarDays, ChevronRight, Compass, Crown, Heart, Home, Languages, MessageCircle, Plus, Search, Star, TestTube2, Trophy, Zap,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
@@ -12,7 +12,8 @@ import {
 import { createPost, setLike, type PostState } from "./actions";
 import { categoryStyle } from "@/lib/categories";
 import { flagEmoji, timeAgo } from "@/lib/format";
-import type { Category, FeedPost, Lang, RankRow, SignedInUser } from "@/lib/types";
+import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
+import type { Category, EventAnnouncement, FeedPost, Lang, RankRow, SignedInUser } from "@/lib/types";
 
 type Section = "home" | "community" | "qa" | "events" | "ranking";
 type Sort = "latest" | "popular";
@@ -27,6 +28,11 @@ const TEXT = {
     start: "로그인하고 시작하기",
     feed: "커뮤니티 피드",
     points: "내 포인트",
+    events: "이벤트 공지",
+    more: "+ 더보기",
+    live: "실시간",
+    noEvents: "등록된 이벤트 공지가 없어요.",
+    eventDate: "이벤트 날짜",
     all: "전체",
     latest: "최신순",
     popular: "인기순",
@@ -43,6 +49,11 @@ const TEXT = {
     start: "Log in to get started",
     feed: "Community feed",
     points: "My points",
+    events: "Event announcements",
+    more: "+ More",
+    live: "LIVE",
+    noEvents: "No event announcements yet.",
+    eventDate: "Event date",
     all: "All",
     latest: "Latest",
     popular: "Popular",
@@ -68,9 +79,10 @@ type Props = {
   categories: Category[];
   posts: FeedPost[];
   ranking: RankRow[];
+  events: EventAnnouncement[];
 };
 
-export default function CommunityClient({ user, signInPath, authControl, categories, posts, ranking }: Props) {
+export default function CommunityClient({ user, signInPath, authControl, categories, posts, ranking, events: initialEvents }: Props) {
   const router = useRouter();
   const [lang, setLang] = useState<Lang>("ko");
   const [section, setSection] = useState<Section>("home");
@@ -78,11 +90,42 @@ export default function CommunityClient({ user, signInPath, authControl, categor
   const [sort, setSort] = useState<Sort>("latest");
   const [writeOpen, setWriteOpen] = useState(false);
   const [likeOverrides, setLikeOverrides] = useState<Record<string, LikeState>>({});
+  const [events, setEvents] = useState(initialEvents);
   const [, startTransition] = useTransition();
   const t = TEXT[lang];
 
   const catName = (c: Category) => (lang === "ko" ? c.name_ko : c.name_en);
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+
+  useEffect(() => {
+    setEvents(initialEvents);
+  }, [initialEvents]);
+
+  useEffect(() => {
+    const supabase = createBrowserSupabaseClient();
+    const channel = supabase
+      .channel("event-announcements")
+      .on("postgres_changes", { event: "*", schema: "public", table: "events" }, async () => {
+        const { data } = await supabase
+          .from("events")
+          .select("id, title, description, starts_at, created_at")
+          .order("created_at", { ascending: false });
+        if (data) {
+          setEvents(data.map((event) => ({
+            id: String(event.id),
+            title: event.title,
+            description: event.description,
+            startsAt: event.starts_at,
+            createdAt: event.created_at,
+          })));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, []);
 
   const shown = useMemo(() => {
     const filtered = categoryId === null ? posts : posts.filter((p) => p.categoryId === categoryId);
@@ -165,7 +208,7 @@ export default function CommunityClient({ user, signInPath, authControl, categor
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1440px] grid-cols-1 gap-6 px-4 py-6 md:px-7 lg:grid-cols-[220px_minmax(0,1fr)_300px]">
+      <div className="mx-auto grid max-w-[1440px] grid-cols-1 gap-6 px-4 py-6 md:px-7 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_300px]">
         {/* 왼쪽 메뉴 */}
         <aside className="hidden lg:block">
           <nav className="sticky top-24 space-y-1">
@@ -223,28 +266,35 @@ export default function CommunityClient({ user, signInPath, authControl, categor
                 )}
               </section>
 
-              {categories.length > 0 && (
-                <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3">
-                  {categories.map((c) => {
-                    const { icon: Icon, color } = categoryStyle(c.slug);
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() => pickCategory(c.id)}
-                        className="flex min-h-24 items-center gap-3 rounded-[22px] bg-white p-4 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
-                      >
-                        <span className="grid size-11 shrink-0 place-items-center rounded-2xl text-white" style={{ background: color }}>
-                          <Icon size={21} />
-                        </span>
-                        <span>
-                          <b className="block text-sm">{catName(c)}</b>
-                          <small className="mt-1 block text-xs text-slate-400">{lang === "ko" ? c.name_en : c.name_ko}</small>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </section>
-              )}
+              <section className="mt-7">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <h2 className="text-lg font-black">{t.events}</h2>
+                    <span className="flex items-center gap-1.5 text-[11px] font-extrabold text-emerald-600">
+                      <span className="size-1.5 rounded-full bg-emerald-500" />
+                      {t.live}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setSection("events")}
+                    className="flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-[#6657ed]"
+                  >
+                    {t.more}
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+                {events.length === 0 ? (
+                  <div className="rounded-2xl bg-white px-5 py-8 text-center text-sm text-slate-500">
+                    {t.noEvents}
+                  </div>
+                ) : (
+                  <div className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2">
+                    {events.map((event) => (
+                      <EventCard key={event.id} event={event} lang={lang} label={t.eventDate} />
+                    ))}
+                  </div>
+                )}
+              </section>
             </>
           )}
 
@@ -360,15 +410,27 @@ export default function CommunityClient({ user, signInPath, authControl, categor
             <ComingSoon eyebrow="GAME QA LAB" title={lang === "ko" ? "게임 테스트" : "Game QA"} note={t.soon} />
           )}
           {section === "events" && (
-            <ComingSoon eyebrow="GLOBAL PROGRAMS" title={lang === "ko" ? "이벤트" : "Events"} note={t.soon} />
+            <section>
+              <p className="text-sm font-bold text-[#6657ed]">GLOBAL PROGRAMS</p>
+              <h1 className="mt-1 text-3xl font-black">{t.events}</h1>
+              {events.length === 0 ? (
+                <div className="mt-6 rounded-2xl bg-white p-10 text-center text-slate-500">{t.noEvents}</div>
+              ) : (
+                <div className="mt-6 space-y-3">
+                  {events.map((event) => (
+                    <EventCard key={event.id} event={event} lang={lang} label={t.eventDate} fullWidth />
+                  ))}
+                </div>
+              )}
+            </section>
           )}
           {section === "ranking" && <Ranking lang={lang} rows={ranking} />}
         </main>
 
         {/* 오른쪽 위젯 */}
-        <aside className="hidden xl:block">
-          <div className="sticky top-24 space-y-5">
-            {user ? (
+        {user && (
+          <aside className="hidden xl:block">
+            <div className="sticky top-24 space-y-5">
               <section className="rounded-[24px] bg-white p-5 shadow-sm">
                 <div className="flex justify-between">
                   <h3 className="font-extrabold">{t.points}</h3>
@@ -378,17 +440,9 @@ export default function CommunityClient({ user, signInPath, authControl, categor
                   {user.points.toLocaleString()} <span className="text-base text-[#6657ed]">P</span>
                 </p>
               </section>
-            ) : (
-              <section className="rounded-[24px] bg-white p-5 shadow-sm">
-                <h3 className="font-extrabold">Playgrnd</h3>
-                <p className="mt-2 text-sm text-slate-500">{t.emptyGuest}</p>
-                <a href={signInPath} className="mt-4 flex h-10 items-center justify-center rounded-xl bg-[#6657ed] text-sm font-extrabold text-white">
-                  {t.start}
-                </a>
-              </section>
-            )}
-          </div>
-        </aside>
+            </div>
+          </aside>
+        )}
       </div>
 
       {/* 모바일 하단 메뉴 */}
@@ -421,6 +475,29 @@ export default function CommunityClient({ user, signInPath, authControl, categor
         </Dialog>
       )}
     </div>
+  );
+}
+
+function EventCard({ event, lang, label, fullWidth = false }: {
+  event: EventAnnouncement;
+  lang: Lang;
+  label: string;
+  fullWidth?: boolean;
+}) {
+  return (
+    <article className={`snap-start rounded-2xl border border-slate-200/80 bg-white p-5 ${fullWidth ? "w-full" : "w-[min(82vw,300px)] shrink-0"}`}>
+      <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+        <CalendarDays size={15} />
+        <time dateTime={event.createdAt} suppressHydrationWarning>{timeAgo(event.createdAt, lang)}</time>
+      </div>
+      <h3 className="mt-3 line-clamp-1 text-base font-black">{event.title}</h3>
+      <p className="mt-2 line-clamp-3 whitespace-pre-line text-sm leading-6 text-slate-500">{event.description}</p>
+      {event.startsAt && (
+        <p className="mt-4 border-t border-slate-100 pt-3 text-xs font-bold text-[#6657ed]">
+          {label}: {new Date(event.startsAt).toLocaleDateString(lang === "ko" ? "ko-KR" : "en-US")}
+        </p>
+      )}
+    </article>
   );
 }
 

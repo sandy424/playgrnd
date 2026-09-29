@@ -25,6 +25,14 @@ export type RankRow = {
   totalPoints: number;
 };
 
+export type EventAnnouncement = {
+  id: string;
+  title: string;
+  description: string;
+  startsAt: string | null;
+  createdAt: string;
+};
+
 export type SignedInUser = {
   displayName: string;
   email: string;

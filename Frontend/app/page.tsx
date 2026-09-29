@@ -1,7 +1,7 @@
 import CommunityClient from "./community-client";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./login/actions";
-import type { Category, FeedPost, RankRow, SignedInUser } from "@/lib/types.ts";
+import type { Category, EventAnnouncement, FeedPost, RankRow, SignedInUser } from "@/lib/types.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +27,8 @@ export default async function Page() {
     };
   }
 
-  // 2) 카테고리 / 게시글 / 랭킹을 동시에 조회
-  const [categoriesRes, postsRes, rankingRes] = await Promise.all([
+  // 2) 카테고리 / 게시글 / 랭킹 / 이벤트 공지를 동시에 조회
+  const [categoriesRes, postsRes, rankingRes, eventsRes] = await Promise.all([
     supabase.from("categories").select("id, slug, name_ko, name_en").order("sort_order"),
     supabase
       .from("posts")
@@ -40,6 +40,10 @@ export default async function Page() {
       .select("nickname, country, total_points")
       .order("total_points", { ascending: false })
       .limit(10),
+    supabase
+      .from("events")
+      .select("id, title, description, starts_at, created_at")
+      .order("created_at", { ascending: false }),
   ]);
 
   const categories: Category[] = categoriesRes.data ?? [];
@@ -86,6 +90,14 @@ export default async function Page() {
     totalPoints: r.total_points ?? 0,
   }));
 
+  const events: EventAnnouncement[] = (eventsRes.data ?? []).map((event) => ({
+    id: String(event.id),
+    title: event.title,
+    description: event.description,
+    startsAt: event.starts_at,
+    createdAt: event.created_at,
+  }));
+
   const signInPath = "/login";
   const authControl = user ? (
     <form action={signOut} className="hidden items-center gap-2 md:flex">
@@ -118,6 +130,7 @@ export default async function Page() {
       categories={categories}
       posts={posts}
       ranking={ranking}
+      events={events}
     />
   );
 }
