@@ -1,55 +1,520 @@
 "use client";
-import { useMemo, useState } from "react";
-import { Bell, Bot, ChevronRight, Code2, Compass, Crown, Globe2, Heart, Home, Languages, MessageCircle, Plus, Search, Sparkles, Star, TestTube2, Trophy, Users, Zap } from "lucide-react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Progress } from "@/components/ui/progress";
 
-type Lang="ko"|"en"; type Section="home"|"community"|"qa"|"events"|"ranking";
-const C={ko:{search:"게임, AI 작품, 개발자를 검색해보세요",write:"글쓰기",login:"로그인 / 가입",hello:"안녕하세요, 플레이메이커님 👋",sub:"오늘도 멋진 게임과 AI 콘텐츠를 함께 만들어봐요.",feed:"커뮤니티 피드",point:"내 포인트",rank:"이번 주 랭킹"},en:{search:"Search games, AI works, and creators",write:"Create",login:"Log in / Sign up",hello:"Hello, Playmaker 👋",sub:"Let’s build remarkable games and AI content together.",feed:"Community feed",point:"My points",rank:"Weekly ranking"}};
-type Category = readonly [english: string, korean: string, icon: typeof Home, color: string];
-const cats: Category[] = [
- ["Showcase","작품 자랑",Sparkles,"#6C5CE7"],
- ["Dev Log","개발 일지",Code2,"#1677FF"],
- ["AI Lab","AI 연구소",Bot,"#8B5CF6"],
- ["Game QA","게임 테스트",TestTube2,"#00A878"],
- ["Team Up","팀원 모집",Users,"#F59E0B"],
- ["Free Talk","자유 토크",MessageCircle,"#FF6685"],
-];
-const seed=[
- {id:1,cat:"Showcase",ko:"AI로 만든 로그라이크 보스 ‘VOID-9’을 공개합니다",en:"Meet VOID-9, our AI-assisted roguelike boss",body:"컨셉 아트부터 공격 패턴 프로토타입까지 3일간의 제작 과정을 정리했어요. 피드백 환영합니다!",user:"Mina Park",flag:"🇰🇷",time:"18분 전",likes:128,comments:34,pts:"+20 P",bg:"linear-gradient(135deg,#120b2f,#39206c 50%,#ef4b91)",art:"VOID—9"},
- {id:2,cat:"Dev Log",ko:"Unity 6에서 1,000마리 군집 AI 최적화하기",en:"Optimizing 1,000 crowd agents in Unity 6",body:"Jobs System과 GPU Instancing을 조합해 모바일에서도 60fps를 확보한 방법을 공유합니다.",user:"Leo Chen",flag:"🇸🇬",time:"1시간 전",likes:89,comments:21,pts:"+15 P",bg:"linear-gradient(135deg,#071b2c,#0d7c86 55%,#7ce8c6)",art:"1,000 AGENTS"},
- {id:3,cat:"AI Lab",ko:"캐릭터 일관성을 위한 ComfyUI 워크플로우",en:"A ComfyUI workflow for consistent characters",body:"LoRA와 ControlNet을 함께 사용해 12개 장면에서 동일 캐릭터를 유지한 실험 결과입니다.",user:"Sofia Reyes",flag:"🇲🇽",time:"3시간 전",likes:76,comments:18,pts:"+15 P",bg:"linear-gradient(135deg,#171717,#3f2a78 55%,#9d82ff)",art:"CONSISTENCY"}
-];
-const ranks=[["🥇","NovaKim","🇰🇷","12,480 P"],["🥈","PixelSmith","🇺🇸","11,920 P"],["🥉","Aiko.dev","🇯🇵","10,750 P"],["4","Leo Chen","🇸🇬","9,860 P"],["5","IndieMika","🇩🇪","9,220 P"]];
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  Bell, Compass, Crown, Heart, Home, Languages, MessageCircle, Plus, Search, Star, TestTube2, Trophy, Zap,
+} from "lucide-react";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { createPost, setLike, type PostState } from "./actions";
+import { categoryStyle } from "@/lib/categories";
+import { flagEmoji, timeAgo } from "@/lib/format";
+import type { Category, FeedPost, Lang, RankRow, SignedInUser } from "@/lib/types";
 
-type SignedInUser = { displayName: string; email: string } | null;
+type Section = "home" | "community" | "qa" | "events" | "ranking";
+type Sort = "latest" | "popular";
+type LikeState = { liked: boolean; count: number };
 
-export default function CommunityClient({user,signInPath,authControl}:{user:SignedInUser;signInPath:string;authControl:React.ReactNode}){
- const[lang,setLang]=useState<Lang>("ko"),[section,setSection]=useState<Section>("home"),[filter,setFilter]=useState("All"),[liked,setLiked]=useState<number[]>([1]),[joined,setJoined]=useState(false),[open,setOpen]=useState(false),[title,setTitle]=useState(""),[posts,setPosts]=useState(seed); const t=C[lang];
- const shown=useMemo(()=>filter==="All"?posts:posts.filter(p=>p.cat===filter),[filter,posts]);
- const add=()=>{if(!title.trim())return;setPosts([{...seed[0],id:Date.now(),ko:title,en:title,body:lang==="ko"?"새로운 제작 과정과 결과물을 공유했습니다.":"A new creation and its process have been shared.",user:"Playmaker",flag:"🌐",time:lang==="ko"?"방금":"Just now",likes:0,comments:0,bg:"linear-gradient(135deg,#645cff,#8a63ff,#3ee6c1)",art:"NEW DROP"},...posts]);setTitle("");setOpen(false);setSection("community")};
- return <div className="min-h-screen bg-[#f5f7fb] text-[#191f2c]">
-  <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl"><div className="mx-auto flex h-[72px] max-w-[1440px] items-center gap-5 px-4 md:px-7">
-   <button onClick={()=>setSection("home")} className="flex shrink-0 items-center gap-2.5" aria-label="Playgrnd home"><PlaygrndMark/><span className="hidden leading-none sm:block"><b className="block text-[21px] font-black tracking-[-.055em]">Playgrnd<span className="text-[#6657ed]">.</span></b><small className="mt-1 block text-[9px] font-extrabold uppercase tracking-[.14em] text-slate-400">AI Game Creator Community</small></span></button>
-   <label className="mx-auto hidden h-11 max-w-[520px] flex-1 items-center gap-2 rounded-2xl bg-[#f2f4f8] px-4 text-slate-500 lg:flex"><Search size={19}/><input aria-label={t.search} placeholder={t.search} className="w-full bg-transparent text-sm outline-none"/></label>
-   <button onClick={()=>setLang(lang==="ko"?"en":"ko")} className="flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-bold hover:bg-slate-100"><Languages size={18}/>{lang==="ko"?"EN":"한국어"}</button><button className="relative grid size-10 place-items-center rounded-xl hover:bg-slate-100"><Bell size={20}/><i className="absolute right-2 top-2 size-2 rounded-full bg-[#ff5f71] ring-2 ring-white"/></button>
-    {user && <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><button className="hidden h-11 items-center gap-2 rounded-2xl bg-[#6657ed] px-5 text-sm font-extrabold text-white shadow-md shadow-indigo-200 sm:flex"><Plus size={18}/>{t.write}</button></DialogTrigger><DialogContent className="rounded-[26px] border-0 sm:max-w-[520px]"><DialogHeader><DialogTitle className="text-2xl">{lang==="ko"?"새 이야기 공유하기":"Share your work"}</DialogTitle><DialogDescription>{lang==="ko"?"개발 과정, AI 실험, 완성 작품을 전 세계 메이커에게 보여주세요.":"Show your process and work to makers worldwide."}</DialogDescription></DialogHeader><input value={title} onChange={e=>setTitle(e.target.value)} placeholder={lang==="ko"?"제목을 입력하세요":"Post title"} className="mt-3 h-13 rounded-2xl border px-4 outline-none focus:border-[#6657ed]"/><textarea placeholder={lang==="ko"?"어떤 것을 만들었나요?":"What did you make?"} className="min-h-32 resize-none rounded-2xl border p-4 outline-none focus:border-[#6657ed]"/><button onClick={add} className="h-12 rounded-2xl bg-[#6657ed] font-extrabold text-white">{lang==="ko"?"게시하고 20P 받기":"Publish and earn 20P"}</button></DialogContent></Dialog>}
-   {authControl}
-  </div></header>
-  <div className="mx-auto grid max-w-[1440px] grid-cols-1 gap-6 px-4 py-6 md:px-7 lg:grid-cols-[220px_minmax(0,1fr)_300px]">
-   <aside className="hidden lg:block"><nav className="sticky top-24 space-y-1">{([["home",Home,lang==="ko"?"홈":"Home"],["community",Compass,lang==="ko"?"커뮤니티":"Community"],["qa",TestTube2,lang==="ko"?"게임 테스트":"Game QA"],["events",Trophy,lang==="ko"?"이벤트":"Events"],["ranking",Crown,lang==="ko"?"랭킹":"Ranking"]] as [Section,typeof Home,string][]).map(([k,I,l])=><button key={k} onClick={()=>setSection(k)} className={`flex h-12 w-full items-center gap-3 rounded-2xl px-4 text-[15px] font-bold ${section===k?"bg-white text-[#6657ed] shadow-sm":"text-slate-600 hover:bg-white/70"}`}><I size={20}/>{l}{k==="qa"&&<span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">6</span>}</button>)}<div className="my-5 border-t"/><p className="px-4 pb-2 text-xs font-extrabold uppercase tracking-wider text-slate-400">Categories</p>{cats.map(([en,ko,,color])=><button key={en} onClick={()=>{setFilter(en);setSection(en==="Game QA"?"qa":"community")}} className="flex h-10 w-full items-center gap-3 rounded-xl px-4 text-sm font-semibold text-slate-600 hover:bg-white"><span className="size-2 rounded-full" style={{background:color}}/>{lang==="ko"?ko:en}</button>)}</nav></aside>
-   <main className="min-w-0">
-    {section==="home"&&<><section className="rounded-[28px] bg-[#17152e] p-7 text-white shadow-xl shadow-indigo-100 md:p-9"><span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold text-[#b9afff]"><Globe2 size={14}/> 48 countries · 12,840 makers</span><h1 className="mt-5 text-3xl font-black tracking-[-.04em] md:text-[40px]">{user?`${user.displayName}님, 반가워요 👋`:t.hello}</h1><p className="mt-3 text-base text-slate-300">{t.sub}</p>{user?<button onClick={()=>setOpen(true)} className="mt-7 flex h-12 items-center gap-2 rounded-2xl bg-white px-5 text-sm font-extrabold text-[#302a78]"><Plus size={18}/>{t.write}<span className="rounded-lg bg-[#eeeaff] px-2 py-0.5 text-xs">+20P</span></button>:<a href={signInPath} target="_top" className="mt-7 inline-flex h-12 items-center gap-2 rounded-2xl bg-white px-5 text-sm font-extrabold text-[#302a78]">ChatGPT로 시작하기</a>}</section><section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3">{cats.map(([en,ko,I,color])=><button key={en} onClick={()=>{setFilter(en);setSection(en==="Game QA"?"qa":"community")}} className="flex min-h-24 items-center gap-3 rounded-[22px] bg-white p-4 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg"><span className="grid size-11 shrink-0 place-items-center rounded-2xl text-white" style={{background:color}}><I size={21}/></span><span><b className="block text-sm">{lang==="ko"?ko:en}</b><small className="mt-1 block text-xs text-slate-400">{en}</small></span></button>)}</section></>}
-    {section==="qa"?<QA lang={lang} joined={joined} setJoined={setJoined}/>:section==="events"?<Events lang={lang}/>:section==="ranking"?<Ranking lang={lang}/>:<section className={section==="home"?"mt-9":""}><div className="mb-4 flex items-end justify-between"><div><p className="text-sm font-bold text-[#6657ed]">{section==="community"?"EXPLORE":"TRENDING NOW"}</p><h2 className="mt-1 text-2xl font-black">{t.feed}</h2></div><button onClick={()=>setFilter("All")} className="rounded-xl bg-white px-4 py-2 text-sm font-bold">{filter==="All"?(lang==="ko"?"전체":"All"):filter}⌄</button></div><div className="space-y-4">{shown.map(p=><article key={p.id} className="overflow-hidden rounded-[24px] bg-white shadow-sm hover:shadow-md"><div className="grid md:grid-cols-[1fr_190px]"><div className="p-5 md:p-6"><div className="mb-4 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-[#eeeaff] font-black text-[#6657ed]">{p.user[0]}</span><div><p className="text-sm font-extrabold">{p.user} {p.flag}</p><p className="text-xs text-slate-400">{p.time} · {p.cat}</p></div><span className="ml-auto rounded-lg bg-indigo-50 px-2 py-1 text-xs font-extrabold text-[#6657ed]">{p.pts}</span></div><h3 className="text-[19px] font-black leading-7">{p[lang]}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{p.body}</p><div className="mt-5 flex gap-5 text-sm font-bold text-slate-500"><button onClick={()=>setLiked(v=>v.includes(p.id)?v.filter(x=>x!==p.id):[...v,p.id])} className={`flex items-center gap-1.5 ${liked.includes(p.id)?"text-[#ff5f71]":""}`}><Heart size={18} fill={liked.includes(p.id)?"currentColor":"none"}/>{p.likes}</button><span className="flex items-center gap-1.5"><MessageCircle size={18}/>{p.comments}</span></div></div><div className="m-4 min-h-36 rounded-[18px] p-4 text-white md:ml-0" style={{background:p.bg}}><div className="flex h-full min-h-28 items-end text-lg font-black tracking-widest">{p.art}</div></div></div></article>)}</div></section>}
-   </main>
-   <aside className="hidden xl:block"><div className="sticky top-24 space-y-5"><section className="rounded-[24px] bg-white p-5 shadow-sm"><div className="flex justify-between"><h3 className="font-extrabold">{t.point}</h3><Zap size={18} className="text-amber-500" fill="currentColor"/></div><p className="mt-4 text-3xl font-black">3,280 <span className="text-base text-[#6657ed]">P</span></p><div className="mt-4 flex justify-between text-xs font-bold text-slate-500"><span>Level 12 · Creator</span><span>72%</span></div><Progress value={72} className="mt-2 h-2"/></section><section className="rounded-[24px] bg-white p-5 shadow-sm"><div className="mb-4 flex justify-between"><h3 className="font-extrabold">{t.rank}</h3><button onClick={()=>setSection("ranking")} className="text-xs font-bold text-[#6657ed]">TOP 10 <ChevronRight size={14} className="inline"/></button></div>{ranks.map(r=><div key={r[1]} className="mb-3 flex items-center gap-3"><span className="w-7 text-center text-sm font-black">{r[0]}</span><span className="grid size-8 place-items-center rounded-full bg-slate-100 text-xs font-black">{r[1][0]}</span><span className="min-w-0 flex-1 truncate text-sm font-bold">{r[1]} {r[2]}</span><span className="text-xs font-extrabold text-slate-500">{r[3]}</span></div>)}</section><section className="rounded-[24px] bg-gradient-to-br from-[#6b5cf0] to-[#8d65f3] p-5 text-white"><span className="rounded-full bg-white/15 px-3 py-1 text-xs font-bold">D-12</span><h3 className="mt-4 text-xl font-black">GLOBAL AI<br/>GAME JAM 2026</h3><p className="mt-2 text-sm text-indigo-100">Seoul · Online · $10K Prize</p><button onClick={()=>setSection("events")} className="mt-5 h-10 w-full rounded-xl bg-white font-extrabold text-[#5d50d4]">{lang==="ko"?"참가 신청":"Join now"}</button></section></div></aside>
-  </div>
-  <nav className="fixed inset-x-3 bottom-3 z-40 flex h-16 items-center justify-around rounded-[22px] bg-white/95 shadow-2xl lg:hidden">{([["home",Home,"홈"],["community",Compass,"커뮤니티"],["qa",TestTube2,"QA"],["events",Trophy,"이벤트"],["ranking",Crown,"랭킹"]] as [Section,typeof Home,string][]).map(([k,I,l])=><button key={k} onClick={()=>setSection(k)} className={`flex flex-col items-center gap-1 text-[11px] font-bold ${section===k?"text-[#6657ed]":"text-slate-400"}`}><I size={20}/>{l}</button>)}</nav>
- </div>
+const TEXT = {
+  ko: {
+    search: "게임, AI 작품, 개발자를 검색해보세요",
+    write: "글쓰기",
+    hello: "안녕하세요, 플레이메이커님 👋",
+    sub: "오늘도 멋진 게임과 AI 콘텐츠를 함께 만들어봐요.",
+    start: "로그인하고 시작하기",
+    feed: "커뮤니티 피드",
+    points: "내 포인트",
+    all: "전체",
+    latest: "최신순",
+    popular: "인기순",
+    emptyTitle: "아직 게시글이 없어요",
+    emptyUser: "첫 번째 이야기를 공유해 보세요.",
+    emptyGuest: "로그인하고 첫 번째 이야기를 공유해 보세요.",
+    soon: "준비 중이에요",
+  },
+  en: {
+    search: "Search games, AI works, and creators",
+    write: "Create",
+    hello: "Hello, Playmaker 👋",
+    sub: "Let’s build remarkable games and AI content together.",
+    start: "Log in to get started",
+    feed: "Community feed",
+    points: "My points",
+    all: "All",
+    latest: "Latest",
+    popular: "Popular",
+    emptyTitle: "No posts yet",
+    emptyUser: "Be the first to share something.",
+    emptyGuest: "Log in and be the first to share something.",
+    soon: "Coming soon",
+  },
+} as const;
+
+const NAV = [
+  { key: "home", icon: Home, ko: "홈", en: "Home" },
+  { key: "community", icon: Compass, ko: "커뮤니티", en: "Community" },
+  { key: "qa", icon: TestTube2, ko: "게임 테스트", en: "Game QA" },
+  { key: "events", icon: Trophy, ko: "이벤트", en: "Events" },
+  { key: "ranking", icon: Crown, ko: "랭킹", en: "Ranking" },
+] as const;
+
+type Props = {
+  user: SignedInUser;
+  signInPath: string;
+  authControl: React.ReactNode;
+  categories: Category[];
+  posts: FeedPost[];
+  ranking: RankRow[];
+};
+
+export default function CommunityClient({ user, signInPath, authControl, categories, posts, ranking }: Props) {
+  const router = useRouter();
+  const [lang, setLang] = useState<Lang>("ko");
+  const [section, setSection] = useState<Section>("home");
+  const [categoryId, setCategoryId] = useState<number | null>(null); // null = 전체
+  const [sort, setSort] = useState<Sort>("latest");
+  const [writeOpen, setWriteOpen] = useState(false);
+  const [likeOverrides, setLikeOverrides] = useState<Record<string, LikeState>>({});
+  const [, startTransition] = useTransition();
+  const t = TEXT[lang];
+
+  const catName = (c: Category) => (lang === "ko" ? c.name_ko : c.name_en);
+  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+
+  const shown = useMemo(() => {
+    const filtered = categoryId === null ? posts : posts.filter((p) => p.categoryId === categoryId);
+    if (sort === "latest") return filtered; // 서버에서 이미 최신순으로 받아옴
+    return [...filtered].sort(
+      (a, b) =>
+        b.likeCount - a.likeCount ||
+        b.commentCount - a.commentCount ||
+        b.createdAt.localeCompare(a.createdAt)
+    );
+  }, [posts, categoryId, sort]);
+
+  const likeStateOf = (p: FeedPost): LikeState =>
+    likeOverrides[p.id] ?? { liked: p.liked, count: p.likeCount };
+
+  // 좋아요: 화면을 먼저 바꾸고(낙관적 업데이트), 서버 저장에 실패하면 되돌립니다.
+  function toggleLike(post: FeedPost) {
+    if (!user) {
+      router.push(signInPath);
+      return;
+    }
+    const current = likeStateOf(post);
+    const next = { liked: !current.liked, count: current.count + (current.liked ? -1 : 1) };
+    setLikeOverrides((prev) => ({ ...prev, [post.id]: next }));
+    startTransition(async () => {
+      const res = await setLike(post.id, next.liked);
+      if (!res.ok) setLikeOverrides((prev) => ({ ...prev, [post.id]: current }));
+    });
+  }
+
+  function pickCategory(id: number | null) {
+    setCategoryId(id);
+    setSection("community");
+  }
+
+  const openWrite = () => setWriteOpen(true);
+
+  return (
+    <div className="min-h-screen bg-[#f5f7fb] text-[#191f2c]">
+      <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
+        <div className="mx-auto flex h-[72px] max-w-[1440px] items-center gap-5 px-4 md:px-7">
+          <button onClick={() => setSection("home")} className="flex shrink-0 items-center gap-2.5" aria-label="Playgrnd home">
+            <PlaygrndMark />
+            <span className="hidden leading-none sm:block">
+              <b className="block text-[21px] font-black tracking-[-.055em]">
+                Playgrnd<span className="text-[#6657ed]">.</span>
+              </b>
+              <small className="mt-1 block text-[9px] font-extrabold uppercase tracking-[.14em] text-slate-400">
+                AI Game Creator Community
+              </small>
+            </span>
+          </button>
+
+          <label className="mx-auto hidden h-11 max-w-[520px] flex-1 items-center gap-2 rounded-2xl bg-[#f2f4f8] px-4 text-slate-500 lg:flex">
+            <Search size={19} />
+            <input aria-label={t.search} placeholder={t.search} className="w-full bg-transparent text-sm outline-none" />
+          </label>
+
+          <button
+            onClick={() => setLang(lang === "ko" ? "en" : "ko")}
+            className="ml-auto flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-bold hover:bg-slate-100 lg:ml-0"
+          >
+            <Languages size={18} />
+            {lang === "ko" ? "EN" : "한국어"}
+          </button>
+          <button className="grid size-10 place-items-center rounded-xl hover:bg-slate-100" aria-label="알림">
+            <Bell size={20} />
+          </button>
+
+          {user && (
+            <button
+              onClick={openWrite}
+              className="hidden h-11 items-center gap-2 rounded-2xl bg-[#6657ed] px-5 text-sm font-extrabold text-white shadow-md shadow-indigo-200 sm:flex"
+            >
+              <Plus size={18} />
+              {t.write}
+            </button>
+          )}
+          {authControl}
+        </div>
+      </header>
+
+      <div className="mx-auto grid max-w-[1440px] grid-cols-1 gap-6 px-4 py-6 md:px-7 lg:grid-cols-[220px_minmax(0,1fr)_300px]">
+        {/* 왼쪽 메뉴 */}
+        <aside className="hidden lg:block">
+          <nav className="sticky top-24 space-y-1">
+            {NAV.map(({ key, icon: Icon, ko, en }) => (
+              <button
+                key={key}
+                onClick={() => setSection(key)}
+                className={`flex h-12 w-full items-center gap-3 rounded-2xl px-4 text-[15px] font-bold ${
+                  section === key ? "bg-white text-[#6657ed] shadow-sm" : "text-slate-600 hover:bg-white/70"
+                }`}
+              >
+                <Icon size={20} />
+                {lang === "ko" ? ko : en}
+              </button>
+            ))}
+            <div className="my-5 border-t" />
+            <p className="px-4 pb-2 text-xs font-extrabold uppercase tracking-wider text-slate-400">Categories</p>
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => pickCategory(c.id)}
+                className="flex h-10 w-full items-center gap-3 rounded-xl px-4 text-sm font-semibold text-slate-600 hover:bg-white"
+              >
+                <span className="size-2 rounded-full" style={{ background: categoryStyle(c.slug).color }} />
+                {catName(c)}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        {/* 가운데 본문 */}
+        <main className="min-w-0">
+          {section === "home" && (
+            <>
+              <section className="rounded-[28px] bg-[#17152e] p-7 text-white shadow-xl shadow-indigo-100 md:p-9">
+                <h1 className="text-3xl font-black tracking-[-.04em] md:text-[40px]">
+                  {user ? (lang === "ko" ? `${user.displayName}님, 반가워요 👋` : `Welcome, ${user.displayName} 👋`) : t.hello}
+                </h1>
+                <p className="mt-3 text-base text-slate-300">{t.sub}</p>
+                {user ? (
+                  <button
+                    onClick={openWrite}
+                    className="mt-7 flex h-12 items-center gap-2 rounded-2xl bg-white px-5 text-sm font-extrabold text-[#302a78]"
+                  >
+                    <Plus size={18} />
+                    {t.write}
+                  </button>
+                ) : (
+                  <a
+                    href={signInPath}
+                    className="mt-7 inline-flex h-12 items-center gap-2 rounded-2xl bg-white px-5 text-sm font-extrabold text-[#302a78]"
+                  >
+                    {t.start}
+                  </a>
+                )}
+              </section>
+
+              {categories.length > 0 && (
+                <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3">
+                  {categories.map((c) => {
+                    const { icon: Icon, color } = categoryStyle(c.slug);
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => pickCategory(c.id)}
+                        className="flex min-h-24 items-center gap-3 rounded-[22px] bg-white p-4 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+                      >
+                        <span className="grid size-11 shrink-0 place-items-center rounded-2xl text-white" style={{ background: color }}>
+                          <Icon size={21} />
+                        </span>
+                        <span>
+                          <b className="block text-sm">{catName(c)}</b>
+                          <small className="mt-1 block text-xs text-slate-400">{lang === "ko" ? c.name_en : c.name_ko}</small>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </section>
+              )}
+            </>
+          )}
+
+          {(section === "home" || section === "community") && (
+            <section className={section === "home" ? "mt-9" : ""}>
+              <div className="mb-4 flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-[#6657ed]">{section === "community" ? "EXPLORE" : "TRENDING NOW"}</p>
+                  <h2 className="mt-1 text-2xl font-black">{t.feed}</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex rounded-xl bg-white p-1 text-sm font-bold">
+                    {(["latest", "popular"] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setSort(s)}
+                        className={`h-8 rounded-lg px-3 ${sort === s ? "bg-[#eeeaff] text-[#6657ed]" : "text-slate-500"}`}
+                      >
+                        {t[s]}
+                      </button>
+                    ))}
+                  </div>
+                  {user && (
+                    <button
+                      onClick={openWrite}
+                      aria-label={t.write}
+                      className="grid size-10 place-items-center rounded-xl bg-[#6657ed] text-white sm:hidden"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="-mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1">
+                <Chip active={categoryId === null} onClick={() => setCategoryId(null)}>{t.all}</Chip>
+                {categories.map((c) => (
+                  <Chip key={c.id} active={categoryId === c.id} onClick={() => setCategoryId(c.id)}>
+                    {catName(c)}
+                  </Chip>
+                ))}
+              </div>
+
+              {shown.length === 0 ? (
+                <div className="rounded-[24px] bg-white p-10 text-center shadow-sm">
+                  <p className="text-lg font-black">{t.emptyTitle}</p>
+                  <p className="mt-2 text-sm text-slate-500">{user ? t.emptyUser : t.emptyGuest}</p>
+                  {user ? (
+                    <button onClick={openWrite} className="mt-5 h-11 rounded-2xl bg-[#6657ed] px-6 text-sm font-extrabold text-white">
+                      {t.write}
+                    </button>
+                  ) : (
+                    <a href={signInPath} className="mt-5 inline-flex h-11 items-center rounded-2xl bg-[#6657ed] px-6 text-sm font-extrabold text-white">
+                      {t.start}
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {shown.map((p) => {
+                    const cat = categoryById.get(p.categoryId);
+                    const like = likeStateOf(p);
+                    return (
+                      <article key={p.id} className="rounded-[24px] bg-white p-5 shadow-sm hover:shadow-md md:p-6">
+                        <div className="mb-4 flex items-center gap-3">
+                          <span className="grid size-10 place-items-center rounded-full bg-[#eeeaff] font-black text-[#6657ed]">
+                            {p.author.nickname[0]?.toUpperCase()}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-extrabold">
+                              {p.author.nickname} {flagEmoji(p.author.country)}
+                            </p>
+                            <p className="text-xs text-slate-400" suppressHydrationWarning>
+                              {timeAgo(p.createdAt, lang)}
+                            </p>
+                          </div>
+                          {cat && (
+                            <span
+                              className="ml-auto shrink-0 rounded-lg px-2 py-1 text-xs font-extrabold text-white"
+                              style={{ background: categoryStyle(cat.slug).color }}
+                            >
+                              {catName(cat)}
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="text-[19px] font-black leading-7">
+                          <Link href={`/posts/${p.id}`} className="hover:text-[#6657ed]">{p.title}</Link>
+                        </h3>
+                        <p className="mt-2 line-clamp-2 whitespace-pre-line text-sm leading-6 text-slate-500">{p.body}</p>
+                        <div className="mt-5 flex gap-5 text-sm font-bold text-slate-500">
+                          <button
+                            onClick={() => toggleLike(p)}
+                            aria-pressed={like.liked}
+                            className={`flex items-center gap-1.5 ${like.liked ? "text-[#ff5f71]" : ""}`}
+                          >
+                            <Heart size={18} fill={like.liked ? "currentColor" : "none"} />
+                            {like.count}
+                          </button>
+                          <Link href={`/posts/${p.id}`} className="flex items-center gap-1.5 hover:text-[#6657ed]">
+                            <MessageCircle size={18} />
+                            {p.commentCount}
+                          </Link>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {section === "qa" && (
+            <ComingSoon eyebrow="GAME QA LAB" title={lang === "ko" ? "게임 테스트" : "Game QA"} note={t.soon} />
+          )}
+          {section === "events" && (
+            <ComingSoon eyebrow="GLOBAL PROGRAMS" title={lang === "ko" ? "이벤트" : "Events"} note={t.soon} />
+          )}
+          {section === "ranking" && <Ranking lang={lang} rows={ranking} />}
+        </main>
+
+        {/* 오른쪽 위젯 */}
+        <aside className="hidden xl:block">
+          <div className="sticky top-24 space-y-5">
+            {user ? (
+              <section className="rounded-[24px] bg-white p-5 shadow-sm">
+                <div className="flex justify-between">
+                  <h3 className="font-extrabold">{t.points}</h3>
+                  <Zap size={18} className="text-amber-500" fill="currentColor" />
+                </div>
+                <p className="mt-4 text-3xl font-black">
+                  {user.points.toLocaleString()} <span className="text-base text-[#6657ed]">P</span>
+                </p>
+              </section>
+            ) : (
+              <section className="rounded-[24px] bg-white p-5 shadow-sm">
+                <h3 className="font-extrabold">Playgrnd</h3>
+                <p className="mt-2 text-sm text-slate-500">{t.emptyGuest}</p>
+                <a href={signInPath} className="mt-4 flex h-10 items-center justify-center rounded-xl bg-[#6657ed] text-sm font-extrabold text-white">
+                  {t.start}
+                </a>
+              </section>
+            )}
+          </div>
+        </aside>
+      </div>
+
+      {/* 모바일 하단 메뉴 */}
+      <nav className="fixed inset-x-3 bottom-3 z-40 flex h-16 items-center justify-around rounded-[22px] bg-white/95 shadow-2xl lg:hidden">
+        {NAV.map(({ key, icon: Icon, ko, en }) => (
+          <button
+            key={key}
+            onClick={() => setSection(key)}
+            className={`flex flex-col items-center gap-1 text-[11px] font-bold ${section === key ? "text-[#6657ed]" : "text-slate-400"}`}
+          >
+            <Icon size={20} />
+            {lang === "ko" ? ko : en}
+          </button>
+        ))}
+      </nav>
+
+      {user && (
+        <Dialog open={writeOpen} onOpenChange={setWriteOpen}>
+          <DialogContent className="rounded-[26px] border-0 sm:max-w-[520px]">
+            <DialogHeader>
+              <DialogTitle className="text-2xl">{lang === "ko" ? "새 이야기 공유하기" : "Share your work"}</DialogTitle>
+              <DialogDescription>
+                {lang === "ko"
+                  ? "개발 과정, AI 실험, 완성 작품을 전 세계 메이커에게 보여주세요."
+                  : "Show your process and work to makers worldwide."}
+              </DialogDescription>
+            </DialogHeader>
+            <WriteForm lang={lang} categories={categories} onDone={() => { setWriteOpen(false); setSection("community"); setCategoryId(null); setSort("latest"); }} />
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
 }
 
-function QA({lang,joined,setJoined}:{lang:Lang;joined:boolean;setJoined:(v:boolean)=>void}){const list=[["Dungeon Pals","Web · Multiplayer","12/20","2,500 P","🇰🇷"],["Orbit Breaker","Steam · Action","31/50","1,800 P","🇨🇦"],["Little Alchemist","Android · Puzzle","8/15","1,200 P","🇯🇵"]];return <section><div className="rounded-[28px] bg-gradient-to-br from-[#0e806f] to-[#37b58e] p-7 text-white"><span className="rounded-full bg-white/15 px-3 py-1 text-xs font-bold">GAME QA LAB</span><h1 className="mt-4 text-3xl font-black">{lang==="ko"?"플레이하고, 피드백하고, 포인트 받기":"Play. Review. Earn points."}</h1><p className="mt-3 text-emerald-50">{lang==="ko"?"출시 전 게임을 가장 먼저 플레이하고 구조화된 QA 리포트를 남겨주세요.":"Play upcoming games first and submit structured QA reports."}</p></div><div className="mt-6 flex justify-between"><h2 className="text-2xl font-black">{lang==="ko"?"모집 중인 테스트":"Open playtests"}</h2><span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-extrabold text-emerald-700">6 LIVE</span></div><div className="mt-4 grid gap-4">{list.map((q,i)=><article key={q[0]} className="flex flex-col gap-4 rounded-[24px] bg-white p-5 shadow-sm sm:flex-row sm:items-center"><div className={`grid size-16 place-items-center rounded-2xl text-xl font-black text-white ${i===0?"bg-indigo-600":i===1?"bg-slate-800":"bg-amber-500"}`}>{q[0][0]}</div><div className="flex-1"><p className="text-lg font-black">{q[0]} {q[4]}</p><p className="mt-1 text-sm text-slate-500">{q[1]} · {q[2]} testers</p></div><div><p className="text-sm font-black text-emerald-600">+{q[3]}</p><button onClick={()=>i===0&&setJoined(!joined)} className={`mt-2 h-10 rounded-xl px-5 text-sm font-extrabold ${i===0&&joined?"bg-emerald-100 text-emerald-700":"bg-[#6657ed] text-white"}`}>{i===0&&joined?(lang==="ko"?"참여 완료":"Joined"):(lang==="ko"?"테스터 신청":"Join test")}</button></div></article>)}</div></section>}
-function Events({lang}:{lang:Lang}){return <section><p className="text-sm font-bold text-[#6657ed]">GLOBAL PROGRAMS</p><h1 className="mt-1 text-3xl font-black">{lang==="ko"?"도전하고 함께 성장하세요":"Build together, grow globally"}</h1><div className="mt-6 grid gap-5 md:grid-cols-2">{[["GLOBAL AI GAME JAM 2026","Game Jam","Sep 19–21","+3,000 P","from-[#6154e8] to-[#9d66ef]"],["Global Studio Internship","Internship","Oct 05–Dec 18","+5,000 P","from-[#087d78] to-[#38b58a]"],["AI CONTENT CHALLENGE","Competition","Nov 02–15","+4,000 P","from-[#d24b68] to-[#f58b5f]"]].map(e=><article key={e[0]} className={`rounded-[26px] bg-gradient-to-br ${e[4]} p-6 text-white shadow-lg`}><span className="rounded-full bg-white/15 px-3 py-1 text-xs font-bold">{e[1]}</span><h2 className="mt-6 text-2xl font-black">{e[0]}</h2><p className="mt-2 text-sm text-white/80">{e[2]} · Online & Offline</p><div className="mt-8 flex justify-between"><b>{e[3]}</b><button className="rounded-xl bg-white px-4 py-2 text-sm font-black text-slate-800">{lang==="ko"?"자세히 보기":"View details"}</button></div></article>)}</div></section>}
-function Ranking({lang}:{lang:Lang}){const all=[...ranks,["6","DevRin","🇫🇷","8,970 P"],["7","NoahBits","🇬🇧","8,440 P"],["8","JisuArt","🇰🇷","7,930 P"],["9","PabloXR","🇪🇸","7,610 P"],["10","KiraMoon","🇦🇺","7,280 P"]];return <section><p className="text-sm font-bold text-[#6657ed]">HALL OF MAKERS</p><h1 className="mt-1 text-3xl font-black">{lang==="ko"?"커뮤니티 TOP 10":"Community Top 10"}</h1><div className="mt-6 overflow-hidden rounded-[26px] bg-white">{all.map((r,i)=><div key={r[1]} className="grid grid-cols-[60px_1fr_auto] items-center border-b px-6 py-4 last:border-0"><b>{r[0]}</b><div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-indigo-50 font-black text-[#6657ed]">{r[1][0]}</span><b>{r[1]} {r[2]}</b>{i<3&&<Star size={15} className="text-amber-500" fill="currentColor"/>}</div><b className="text-sm text-[#6657ed]">{r[3]}</b></div>)}</div></section>}
+// 글쓰기 폼: Dialog가 닫히면 함께 사라지므로 열 때마다 입력값과 에러가 초기화됩니다.
+function WriteForm({ lang, categories, onDone }: { lang: Lang; categories: Category[]; onDone: () => void }) {
+  const [state, action, pending] = useActionState<PostState, FormData>(createPost, {});
+  useEffect(() => {
+    if (state.ok) onDone();
+  }, [state, onDone]);
 
-function PlaygrndMark(){return <svg className="size-11 shrink-0 drop-shadow-[0_8px_12px_rgba(102,87,237,.28)]" viewBox="0 0 48 48" role="img" aria-label="Playgrnd logo"><defs><linearGradient id="playgrnd-gradient" x1="5" y1="4" x2="43" y2="44"><stop stopColor="#8174ff"/><stop offset="1" stopColor="#5141dc"/></linearGradient></defs><rect x="2" y="2" width="44" height="44" rx="15" fill="url(#playgrnd-gradient)"/><path d="M19 14.8c0-1.6 1.8-2.5 3.1-1.6l15 10.1c1.2.8 1.2 2.6 0 3.4l-15 10.1c-1.3.9-3.1 0-3.1-1.6V14.8Z" fill="white"/><circle cx="14" cy="14" r="3.2" fill="#53e5bd"/><circle cx="37" cy="12" r="2" fill="#ffcd65"/><path d="M10 34c4 4.3 8.3 6.4 13 6.4" fill="none" stroke="#bdb7ff" strokeWidth="2.4" strokeLinecap="round"/></svg>}
+  const field = "w-full rounded-2xl border px-4 outline-none focus:border-[#6657ed]";
+  return (
+    <form action={action} className="mt-2 flex flex-col gap-3">
+      <select name="category_id" required defaultValue="" className={`${field} h-12 bg-white`}>
+        <option value="" disabled>{lang === "ko" ? "카테고리 선택" : "Choose a category"}</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>{lang === "ko" ? c.name_ko : c.name_en}</option>
+        ))}
+      </select>
+      <input name="title" required minLength={2} maxLength={100} placeholder={lang === "ko" ? "제목을 입력하세요" : "Post title"} className={`${field} h-12`} />
+      <textarea name="body" required placeholder={lang === "ko" ? "어떤 것을 만들었나요?" : "What did you make?"} className={`${field} min-h-32 resize-none py-3`} />
+      {state.error && <p className="rounded-xl bg-rose-50 p-3 text-sm font-semibold text-rose-600">{state.error}</p>}
+      <button disabled={pending} className="h-12 rounded-2xl bg-[#6657ed] font-extrabold text-white disabled:opacity-60">
+        {pending ? (lang === "ko" ? "게시 중..." : "Publishing...") : lang === "ko" ? "게시하기" : "Publish"}
+      </button>
+    </form>
+  );
+}
+
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`h-9 shrink-0 rounded-full px-4 text-sm font-bold ${active ? "bg-[#6657ed] text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ComingSoon({ eyebrow, title, note }: { eyebrow: string; title: string; note: string }) {
+  return (
+    <section>
+      <p className="text-sm font-bold text-[#6657ed]">{eyebrow}</p>
+      <h1 className="mt-1 text-3xl font-black">{title}</h1>
+      <div className="mt-6 rounded-[26px] bg-white p-10 text-center text-slate-500 shadow-sm">{note}</div>
+    </section>
+  );
+}
+
+function Ranking({ lang, rows }: { lang: Lang; rows: RankRow[] }) {
+  return (
+    <section>
+      <p className="text-sm font-bold text-[#6657ed]">HALL OF MAKERS</p>
+      <h1 className="mt-1 text-3xl font-black">{lang === "ko" ? "커뮤니티 TOP 10" : "Community Top 10"}</h1>
+      <div className="mt-6 overflow-hidden rounded-[26px] bg-white">
+        {rows.length === 0 ? (
+          <p className="p-10 text-center text-sm text-slate-500">
+            {lang === "ko" ? "아직 랭킹이 없어요. 활동하면 포인트가 쌓여요." : "No rankings yet. Earn points by being active."}
+          </p>
+        ) : (
+          rows.map((r, i) => (
+            <div key={`${r.nickname}-${i}`} className="grid grid-cols-[60px_1fr_auto] items-center border-b px-6 py-4 last:border-0">
+              <b>{i + 1}</b>
+              <div className="flex items-center gap-3">
+                <span className="grid size-10 place-items-center rounded-full bg-indigo-50 font-black text-[#6657ed]">
+                  {r.nickname[0]?.toUpperCase()}
+                </span>
+                <b>{r.nickname} {flagEmoji(r.country)}</b>
+                {i < 3 && <Star size={15} className="text-amber-500" fill="currentColor" />}
+              </div>
+              <b className="text-sm text-[#6657ed]">{r.totalPoints.toLocaleString()} P</b>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function PlaygrndMark() {
+  return (
+    <svg className="size-11 shrink-0 drop-shadow-[0_8px_12px_rgba(102,87,237,.28)]" viewBox="0 0 48 48" role="img" aria-label="Playgrnd logo">
+      <defs>
+        <linearGradient id="playgrnd-gradient" x1="5" y1="4" x2="43" y2="44">
+          <stop stopColor="#8174ff" />
+          <stop offset="1" stopColor="#5141dc" />
+        </linearGradient>
+      </defs>
+      <rect x="2" y="2" width="44" height="44" rx="15" fill="url(#playgrnd-gradient)" />
+      <path d="M19 14.8c0-1.6 1.8-2.5 3.1-1.6l15 10.1c1.2.8 1.2 2.6 0 3.4l-15 10.1c-1.3.9-3.1 0-3.1-1.6V14.8Z" fill="white" />
+      <circle cx="14" cy="14" r="3.2" fill="#53e5bd" />
+      <circle cx="37" cy="12" r="2" fill="#ffcd65" />
+      <path d="M10 34c4 4.3 8.3 6.4 13 6.4" fill="none" stroke="#bdb7ff" strokeWidth="2.4" strokeLinecap="round" />
+    </svg>
+  );
+}
