@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { translateText } from "@/lib/deepl";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export type PostState = { error?: string; ok?: boolean };
 
@@ -112,4 +114,61 @@ export async function deletePost(formData: FormData): Promise<void> {
 
   revalidatePath("/");
   redirect("/");
+}
+
+export type TranslateResult =
+  | { ok: true; title: string; body: string; translated: boolean }
+  | { ok: false; error: string };
+
+export async function translatePost(postId: string, target: "ko" | "en"): Promise<TranslateResult> {
+  // 1) 로그인 확인 (아무나 호출하면 무료 번역 한도가 금방 사라져요)
+  const { supabase, userId } = await currentUserId();
+  if (!userId) return { ok: false, error: "로그인이 필요해요." };
+
+  // 2) 원문 조회 (숨김 처리된 글은 RLS 때문에 안 보여요)
+  const { data: post } = await supabase
+    .from("posts")
+    .select("title, body")
+    .eq("id", postId)
+    .maybeSingle();
+  if (!post) return { ok: false, error: "글을 찾을 수 없어요." };
+
+  // 3) 너무 긴 글은 번역하지 않아요
+  if (post.body.length >5000) {
+    return { ok: false, error: "글이 너무 길어서 번역할 수 없어요." };
+  }
+
+  // 4) 원문이 이미 target 언어면 그대로 돌려줘요 (한글이 있으면 한국어로 판단)
+  const sourceLang = /[가-힣]/.test(post.title + post.body) ? "ko" : "en";
+  if (sourceLang === target) {
+    return { ok: true, title: post.title, body: post.body, translated: false };
+  }
+
+  // 5) 저장된 번역이 있으면 그대로 사용
+  const { data: cached } = await supabase
+    .from("post_translations")
+    .select("title, body")
+    .match({ post_id: postId, lang: target })
+    .maybeSingle();
+  if (cached) return { ok: true, ...cached, translated: true };
+
+  // 6) 없으면 DeepL로 번역 (제목과 본문을 동시에 요청)
+  try {
+    const [title, body] = await Promise.all([
+      translateText(post.title, target),
+      translateText(post.body, target),
+    ]);
+
+    // 7) 저장은 관리자 클라이언트로만 가능해요 (일반 사용자에겐 쓰기 정책이 없어요)
+    const admin = createAdminClient();
+    const { error } = await admin
+      .from("post_translations")
+      .upsert({ post_id: postId, lang: target, title, body });
+    if (error) console.error("[translatePost:save]", error.message); // 저장이 실패해도 번역은 보여줘요
+
+    return { ok: true, title, body, translated: true };
+  } catch (e) {
+    console.error("[translatePost]", e);
+    return { ok: false, error: "번역에 실패했어요. 잠시 후 다시 시도해 주세요." };
+  }
 }
