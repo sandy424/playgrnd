@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { translateText } from "@/lib/deepl";
+import { translateText, translateTexts } from "@/lib/deepl";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type PostState = { error?: string; ok?: boolean };
@@ -121,20 +121,17 @@ export type TranslateResult =
   | { ok: false; error: string };
 
 export async function translatePost(postId: string, target: "ko" | "en"): Promise<TranslateResult> {
-  // 1) 로그인 확인 (아무나 호출하면 무료 번역 한도가 금방 사라져요)
-  const { supabase, userId } = await currentUserId();
-  if (!userId) return { ok: false, error: "로그인이 필요해요." };
-
-  // 2) 원문 조회 (숨김 처리된 글은 RLS 때문에 안 보여요)
-  const { data: post } = await supabase
+  // 게시물 번역은 공개 기능이므로 로그인 없이 읽을 수 있어야 합니다.
+  const supabase = await createClient();
+  const { data: post, error } = await supabase
     .from("posts")
     .select("title, body")
     .eq("id", postId)
     .maybeSingle();
+  if (error) console.error("[translatePost:post]", error.message);
   if (!post) return { ok: false, error: "글을 찾을 수 없어요." };
-
   // 3) 너무 긴 글은 번역하지 않아요
-  if (post.body.length >5000) {
+  if (post.body.length > 5000) {
     return { ok: false, error: "글이 너무 길어서 번역할 수 없어요." };
   }
 
@@ -159,16 +156,84 @@ export async function translatePost(postId: string, target: "ko" | "en"): Promis
       translateText(post.body, target),
     ]);
 
-    // 7) 저장은 관리자 클라이언트로만 가능해요 (일반 사용자에겐 쓰기 정책이 없어요)
-    const admin = createAdminClient();
-    const { error } = await admin
-      .from("post_translations")
-      .upsert({ post_id: postId, lang: target, title, body });
-    if (error) console.error("[translatePost:save]", error.message); // 저장이 실패해도 번역은 보여줘요
+    // 번역 저장은 서버 관리자 키가 설정된 경우에만 시도합니다.
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      const admin = createAdminClient();
+      const { error: saveError } = await admin
+        .from("post_translations")
+        .upsert({ post_id: postId, lang: target, title, body });
+      if (saveError) console.error("[translatePost:save]", saveError.message);
+    }
 
     return { ok: true, title, body, translated: true };
   } catch (e) {
     console.error("[translatePost]", e);
-    return { ok: false, error: "번역에 실패했어요. 잠시 후 다시 시도해 주세요." };
+    const error = e instanceof Error && e.message.includes("DEEPL_API_KEY")
+      ? "서버에 DEEPL_API_KEY 설정이 필요해요."
+      : "번역에 실패했어요. 잠시 후 다시 시도해 주세요.";
+    return { ok: false, error };
+  }
+}
+
+export type TranslateCommentsResult =
+  | { ok: true; comments: Record<string, string> }
+  | { ok: false; error: string };
+
+export async function translatePostComments(postId: string, target: "ko" | "en"): Promise<TranslateCommentsResult> {
+  const supabase = await createClient();
+  const { data: comments, error } = await supabase
+    .from("comments")
+    .select("id, body")
+    .eq("post_id", postId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("[translatePostComments:comments]", error.message);
+    return { ok: false, error: "댓글을 불러오지 못했어요." };
+  }
+  if (!comments?.length) return { ok: true, comments: {} };
+
+  const { data: cached } = await supabase
+    .from("comment_translations")
+    .select("comment_id, body")
+    .eq("lang", target)
+    .in("comment_id", comments.map((comment) => String(comment.id)));
+  const translatedById = new Map((cached ?? []).map((item) => [item.comment_id, item.body]));
+  const missing = comments.filter((comment) =>
+    !translatedById.has(String(comment.id))
+      && (/[가-힣]/.test(comment.body) ? "ko" : "en") !== target
+  );
+
+  try {
+    for (let index = 0; index < missing.length; index += 50) {
+      const batch = missing.slice(index, index + 50);
+      const bodies = await translateTexts(batch.map((comment) => comment.body), target);
+      batch.forEach((comment, bodyIndex) => {
+        translatedById.set(String(comment.id), bodies[bodyIndex]);
+      });
+    }
+
+    const newTranslations = missing.map((comment) => ({
+      comment_id: String(comment.id),
+      lang: target,
+      body: translatedById.get(String(comment.id))!,
+    }));
+    if (newTranslations.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      const admin = createAdminClient();
+      const { error: saveError } = await admin
+        .from("comment_translations")
+        .upsert(newTranslations);
+      if (saveError) console.error("[translatePostComments:save]", saveError.message);
+    }
+
+    return {
+      ok: true,
+      comments: Object.fromEntries(translatedById),
+    };
+  } catch (e) {
+    console.error("[translatePostComments]", e);
+    const message = e instanceof Error && e.message.includes("DEEPL_API_KEY")
+      ? "서버에 DEEPL_API_KEY 설정이 필요해요."
+      : "댓글 번역에 실패했어요.";
+    return { ok: false, error: message };
   }
 }

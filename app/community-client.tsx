@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -9,15 +9,20 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { createPost, setLike, type PostState } from "./actions";
+import { createPost, setLike, translatePost, type PostState } from "./actions";
 import { categoryStyle } from "@/lib/categories";
-import { flagEmoji, timeAgo } from "@/lib/format";
+import { detectLang, flagEmoji, timeAgo } from "@/lib/format";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import type { Category, EventAnnouncement, FeedPost, Lang, RankRow, SignedInUser } from "@/lib/types";
+
 
 type Section = "home" | "community" | "qa" | "events" | "ranking";
 type Sort = "latest" | "popular";
 type LikeState = { liked: boolean; count: number };
+type PostTranslation = { title: string; body: string };
+
+const LANGUAGE_STORAGE_KEY = "playgrnd-language";
+const TRANSLATION_STORAGE_KEY = "playgrnd-post-translations";
 
 const TEXT = {
   ko: {
@@ -40,6 +45,8 @@ const TEXT = {
     emptyUser: "첫 번째 이야기를 공유해 보세요.",
     emptyGuest: "로그인하고 첫 번째 이야기를 공유해 보세요.",
     soon: "준비 중이에요",
+    translating: "번역 중...",
+    translateError: "일부 게시물을 번역하지 못했어요.",
   },
   en: {
     search: "Search games, AI works, and creators",
@@ -61,6 +68,8 @@ const TEXT = {
     emptyUser: "Be the first to share something.",
     emptyGuest: "Log in and be the first to share something.",
     soon: "Coming soon",
+    translating: "Translating posts...",
+    translateError: "Some posts could not be translated.",
   },
 } as const;
 
@@ -85,17 +94,40 @@ type Props = {
 export default function CommunityClient({ user, signInPath, authControl, categories, posts, ranking, events: initialEvents }: Props) {
   const router = useRouter();
   const [lang, setLang] = useState<Lang>("ko");
+  const [translationEnabled, setTranslationEnabled] = useState(false);
   const [section, setSection] = useState<Section>("home");
   const [categoryId, setCategoryId] = useState<number | null>(null); // null = 전체
   const [sort, setSort] = useState<Sort>("latest");
   const [writeOpen, setWriteOpen] = useState(false);
   const [likeOverrides, setLikeOverrides] = useState<Record<string, LikeState>>({});
+  const [translations, setTranslations] = useState<Record<string, PostTranslation>>({});
+  const [pendingTranslations, setPendingTranslations] = useState(0);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+  const requestedTranslations = useRef(new Set<string>());
   const [events, setEvents] = useState(initialEvents);
   const [, startTransition] = useTransition();
   const t = TEXT[lang];
 
   const catName = (c: Category) => (lang === "ko" ? c.name_ko : c.name_en);
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+
+  useEffect(() => {
+    try {
+      const savedLang = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+      if (savedLang === "ko" || savedLang === "en") {
+        setLang(savedLang);
+        setTranslationEnabled(true);
+      }
+
+      const savedTranslations = window.localStorage.getItem(TRANSLATION_STORAGE_KEY);
+      if (savedTranslations) {
+        const parsed = JSON.parse(savedTranslations) as Record<string, PostTranslation>;
+        if (parsed && typeof parsed === "object") setTranslations(parsed);
+      }
+    } catch {
+      // Storage can be unavailable in restricted browser contexts.
+    }
+  }, []);
 
   useEffect(() => {
     setEvents(initialEvents);
@@ -156,6 +188,43 @@ export default function CommunityClient({ user, signInPath, authControl, categor
     });
   }
 
+  useEffect(() => {
+    if (!translationEnabled) return;
+
+    const targets = shown.filter((post) => {
+      const key = `${post.id}:${lang}`;
+      return detectLang(`${post.title}\n${post.body}`) !== lang
+        && !translations[key]
+        && !requestedTranslations.current.has(key);
+    });
+    if (targets.length === 0) return;
+
+    targets.forEach((post) => requestedTranslations.current.add(`${post.id}:${lang}`));
+    setTranslationError(null);
+    setPendingTranslations((count) => count + targets.length);
+
+    (async () => {
+      for (const post of targets) {
+        const key = `${post.id}:${lang}`;
+        const res = await translatePost(post.id, lang);
+        if (res.ok) {
+          const translated = { title: res.title, body: res.body };
+          setTranslations((prev) => ({ ...prev, [key]: translated }));
+          try {
+            const saved = JSON.parse(window.localStorage.getItem(TRANSLATION_STORAGE_KEY) ?? "{}") as Record<string, PostTranslation>;
+            const entries = Object.entries({ ...saved, [key]: translated }).slice(-100);
+            window.localStorage.setItem(TRANSLATION_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+          } catch {
+            // Translation still works when local storage is full or unavailable.
+          }
+        } else {
+          setTranslationError(res.error);
+        }
+        setPendingTranslations((count) => Math.max(0, count - 1));
+      }
+    })();
+  }, [lang, shown, translations, translationEnabled]);
+
   function pickCategory(id: number | null) {
     setCategoryId(id);
     setSection("community");
@@ -185,12 +254,26 @@ export default function CommunityClient({ user, signInPath, authControl, categor
           </label>
 
           <button
-            onClick={() => setLang(lang === "ko" ? "en" : "ko")}
+            onClick={() => {
+              const nextLang = lang === "ko" ? "en" : "ko";
+              setTranslationEnabled(true);
+              setLang(nextLang);
+              try {
+                window.localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLang);
+              } catch {
+                // The current page can still switch languages without storage.
+              }
+            }}
             className="ml-auto flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-bold hover:bg-slate-100 lg:ml-0"
           >
             <Languages size={18} />
             {lang === "ko" ? "EN" : "한국어"}
           </button>
+          {(pendingTranslations > 0 || translationError) && (
+            <span aria-live="polite" className="hidden text-xs font-semibold text-slate-500 sm:block">
+              {pendingTranslations > 0 ? t.translating : translationError}
+            </span>
+          )}
           <button className="grid size-10 place-items-center rounded-xl hover:bg-slate-100" aria-label="알림">
             <Bell size={20} />
           </button>
@@ -357,6 +440,9 @@ export default function CommunityClient({ user, signInPath, authControl, categor
                   {shown.map((p) => {
                     const cat = categoryById.get(p.categoryId);
                     const like = likeStateOf(p);
+                    const key = `${p.id}:${lang}`;
+                    const tr = translations[key];
+
                     return (
                       <article key={p.id} className="rounded-[24px] bg-white p-5 shadow-sm hover:shadow-md md:p-6">
                         <div className="mb-4 flex items-center gap-3">
@@ -381,9 +467,9 @@ export default function CommunityClient({ user, signInPath, authControl, categor
                           )}
                         </div>
                         <h3 className="text-[19px] font-black leading-7">
-                          <Link href={`/posts/${p.id}`} className="hover:text-[#6657ed]">{p.title}</Link>
+                          <Link href={translationEnabled ? `/posts/${p.id}?lang=${lang}` : `/posts/${p.id}`} className="hover:text-[#6657ed]">{tr?.title ?? p.title}</Link>
                         </h3>
-                        <p className="mt-2 line-clamp-2 whitespace-pre-line text-sm leading-6 text-slate-500">{p.body}</p>
+                        <p className="mt-2 line-clamp-2 whitespace-pre-line text-sm leading-6 text-slate-500">{tr?.body ?? p.body}</p>
                         <div className="mt-5 flex gap-5 text-sm font-bold text-slate-500">
                           <button
                             onClick={() => toggleLike(p)}
@@ -393,7 +479,7 @@ export default function CommunityClient({ user, signInPath, authControl, categor
                             <Heart size={18} fill={like.liked ? "currentColor" : "none"} />
                             {like.count}
                           </button>
-                          <Link href={`/posts/${p.id}`} className="flex items-center gap-1.5 hover:text-[#6657ed]">
+                          <Link href={translationEnabled ? `/posts/${p.id}?lang=${lang}` : `/posts/${p.id}`} className="flex items-center gap-1.5 hover:text-[#6657ed]">
                             <MessageCircle size={18} />
                             {p.commentCount}
                           </Link>

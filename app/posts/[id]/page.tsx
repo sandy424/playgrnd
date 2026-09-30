@@ -6,13 +6,17 @@ import { categoryStyle } from "@/lib/categories";
 import { displayName, flagEmoji, timeAgo } from "@/lib/format";
 import LikeButton from "@/components/like-button";
 import CommentForm from "@/components/comment-form";
-import { deleteComment } from "@/app/actions";
+import { deleteComment, translatePost, translatePostComments } from "@/app/actions";
 import DeletePostButton from "@/components/delete-button";
 
 export const dynamic = "force-dynamic";
 
-export default async function PostPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export default async function PostPage({ params, searchParams }: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ lang?: string }>;
+}) {
+  const [{ id }, query] = await Promise.all([params, searchParams]);
+  const lang = query.lang === "en" || query.lang === "ko" ? query.lang : null;
   const supabase = await createClient();
   const { data: auth } = await supabase.auth.getClaims();
   const userId = auth?.claims?.sub ?? null;
@@ -25,8 +29,12 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
     .maybeSingle();
   if (!post) notFound();
 
+  const translatedPost = lang ? await translatePost(id, lang) : null;
+  const title = translatedPost?.ok ? translatedPost.title : post.title;
+  const body = translatedPost?.ok ? translatedPost.body : post.body;
+
   const [categoryRes, commentsRes, likeRes] = await Promise.all([
-    supabase.from("categories").select("slug, name_ko").eq("id", post.category_id).maybeSingle(),
+    supabase.from("categories").select("slug, name_ko, name_en").eq("id", post.category_id).maybeSingle(),
     supabase
       .from("comments")
       .select("id, user_id, body, created_at")
@@ -39,6 +47,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
 
   const category = categoryRes.data;
   const comments = commentsRes.data ?? [];
+  const translatedComments = lang ? await translatePostComments(id, lang) : null;
+  const commentTextById = translatedComments?.ok ? translatedComments.comments : {};
 
   const authorIds = [...new Set([post.user_id, ...comments.map((c) => c.user_id)])];
   const { data: profiles } = await supabase.from("profiles").select("id, nickname, country").in("id", authorIds);
@@ -59,14 +69,14 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
               <p className="truncate text-sm font-extrabold">
                 {displayName(postAuthor?.nickname)} {flagEmoji(postAuthor?.country)}
               </p>
-              <p className="text-xs text-slate-400">{timeAgo(post.created_at, "ko")}</p>
+              <p className="text-xs text-slate-400">{timeAgo(post.created_at, lang ?? "ko")}</p>
             </div>
             {category && (
               <span
                 className="ml-auto shrink-0 rounded-lg px-2 py-1 text-xs font-extrabold text-white"
                 style={{ background: categoryStyle(category.slug).color }}
               >
-                {category.name_ko}
+                {lang === "en" ? category.name_en : category.name_ko}
               </span>
             )}
             {post.user_id === userId && (
@@ -76,8 +86,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             )}
           </div>
 
-          <h1 className="text-2xl font-black leading-8">{post.title}</h1>
-          <p className="mt-4 whitespace-pre-line text-[15px] leading-7 text-slate-700">{post.body}</p>
+          <h1 className="text-2xl font-black leading-8">{title}</h1>
+          <p className="mt-4 whitespace-pre-line text-[15px] leading-7 text-slate-700">{body}</p>
 
           <div className="mt-6 flex items-center gap-5 border-t pt-4">
             <LikeButton postId={post.id} initialLiked={!!likeRes.data} initialCount={post.like_count} signedIn={!!userId} />
@@ -89,20 +99,24 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         </article>
 
         <section className="mt-6 rounded-[24px] bg-white p-6 shadow-sm md:p-8">
-          <h2 className="text-lg font-black">댓글 {comments.length}</h2>
+          <h2 className="text-lg font-black">{lang === "en" ? `Comments (${comments.length})` : `댓글 ${comments.length}`}</h2>
 
           <div className="mt-4">
             {userId ? (
-              <CommentForm postId={post.id} />
+              <CommentForm postId={post.id} lang={lang ?? "ko"} />
             ) : (
               <p className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">
-                댓글을 쓰려면 <Link href="/login" className="font-bold text-[#6657ed]">로그인</Link>이 필요해요.
+                {lang === "en" ? "Log in to write a comment: " : "댓글을 쓰려면 "}
+                <Link href="/login" className="font-bold text-[#6657ed]">{lang === "en" ? "Log in" : "로그인"}</Link>
+                {lang === "en" ? " is required." : "이 필요해요."}
               </p>
             )}
           </div>
 
           {comments.length === 0 ? (
-            <p className="mt-6 text-center text-sm text-slate-400">아직 댓글이 없어요. 첫 댓글을 남겨보세요.</p>
+            <p className="mt-6 text-center text-sm text-slate-400">
+              {lang === "en" ? "No comments yet. Be the first to comment." : "아직 댓글이 없어요. 첫 댓글을 남겨보세요."}
+            </p>
           ) : (
             <ul className="mt-6 divide-y">
               {comments.map((c) => {
@@ -111,16 +125,18 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
                   <li key={c.id} className="py-4">
                     <div className="flex items-center gap-2 text-sm">
                       <b className="font-extrabold">{displayName(author?.nickname)} {flagEmoji(author?.country)}</b>
-                      <span className="text-xs text-slate-400">{timeAgo(c.created_at, "ko")}</span>
+                      <span className="text-xs text-slate-400">{timeAgo(c.created_at, lang ?? "ko")}</span>
                       {c.user_id === userId && (
                         <form action={deleteComment} className="ml-auto">
                           <input type="hidden" name="comment_id" value={c.id} />
                           <input type="hidden" name="post_id" value={post.id} />
-                          <button className="text-xs font-bold text-slate-400 hover:text-rose-500">삭제</button>
+                          <button className="text-xs font-bold text-slate-400 hover:text-rose-500">{lang === "en" ? "Delete" : "삭제"}</button>
                         </form>
                       )}
                     </div>
-                    <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-700">{c.body}</p>
+                    <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-700">
+                      {commentTextById[String(c.id)] ?? c.body}
+                    </p>
                   </li>
                 );
               })}

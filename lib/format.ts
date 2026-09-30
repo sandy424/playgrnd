@@ -25,3 +25,7 @@ export function flagEmoji(country?: string | null): string {
 export function displayName(nickname?: string | null): string {
   return (nickname ?? "user").split("_")[0] || "user";
 }
+
+export function detectLang(text: string): Lang {
+  return /[가-힣]/.test(text) ? "ko" : "en";
+}
